@@ -37,7 +37,7 @@ namespace SharpLlmTensors.Shared
         public HardwareStatistics? HardwareStatsAfterLoad { get; set; }
 
         public double? CpuMemoryOffloadSizeMb => (this.HardwareStatsBeforeLoad != null && this.HardwareStatsAfterLoad != null) ? this.HardwareStatsAfterLoad.RamStats.UsedMemoryMb - this.HardwareStatsBeforeLoad.RamStats.UsedMemoryMb : null;
-        public double? GpuMemoryOffloadSizeMb => (this.HardwareStatsBeforeLoad != null && this.HardwareStatsAfterLoad != null) ? this.HardwareStatsAfterLoad.RamStats.UsedMemoryMb - this.HardwareStatsBeforeLoad.RamStats.UsedMemoryMb : null;
+        public double? GpuMemoryOffloadSizeMb => (this.HardwareStatsBeforeLoad != null && this.HardwareStatsAfterLoad != null) ? this.HardwareStatsAfterLoad.GpuStats.VramStats.UsedMemoryMb - this.HardwareStatsBeforeLoad.GpuStats.VramStats.UsedMemoryMb : null;
 
         public List<string> ErrorMessages { get; set; } = [];
 

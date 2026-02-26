@@ -10,9 +10,8 @@ namespace SharpLlmTensors.Runtime
     {
         public static AppSettings AppSettings { get; private set; } = new();
 
-        public readonly BindingList<string> ModelDirectories = [
-            "D:\\Models\\Safetensors"
-            ];
+        // Start with an empty list. Directories are supplied via AppSettings at startup or via API.
+        public readonly BindingList<string> ModelDirectories = new BindingList<string>();
         public readonly BindingList<TorchSharpModel> ModelsBindingList = new();
 
 
@@ -37,10 +36,45 @@ namespace SharpLlmTensors.Runtime
                 }
             }
 
-            // Get directories that contain at least a .safetensor file
-            List<string> subdirs = this.ModelDirectories.SelectMany(Directory.GetDirectories).ToList();
-            string[] modelDirectoriesWithSafetensors = subdirs
-                .Where(dir => Directory.Exists(dir) && Directory.GetFiles(dir, "*.safetensors").Any())
+            // Build a safe list of candidate directories to search for .safetensors files.
+            // Protect against missing/non-existing entries in ModelDirectories and IO exceptions
+            var candidates = new List<string>();
+            foreach (var baseDir in this.ModelDirectories)
+            {
+                if (string.IsNullOrWhiteSpace(baseDir))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (Directory.Exists(baseDir))
+                    {
+                        // include the root itself (in case the user pointed directly at a model folder)
+                        candidates.Add(baseDir);
+
+                        // include immediate subdirectories (original behaviour)
+                        foreach (var sd in Directory.EnumerateDirectories(baseDir))
+                        {
+                            candidates.Add(sd);
+                        }
+                    }
+                    else
+                    {
+                        // Log missing directories but do not throw - this is a configuration issue
+                        StaticLogger.Log($"[TorchService] Model directory does not exist: {baseDir}");
+                    }
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException || ex is DirectoryNotFoundException || ex is IOException)
+                {
+                    StaticLogger.Log($"[TorchService] Error accessing model directory '{baseDir}': {ex.Message}");
+                    continue;
+                }
+            }
+
+            string[] modelDirectoriesWithSafetensors = candidates
+                // Use recursive search: model files may be located in nested folders under the model root
+                .Where(dir => Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*.safetensors", System.IO.SearchOption.AllDirectories).Any())
                 .ToArray();
 
             foreach (var dir in modelDirectoriesWithSafetensors)
