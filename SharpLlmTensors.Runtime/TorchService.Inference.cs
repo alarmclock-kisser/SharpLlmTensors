@@ -81,7 +81,7 @@ namespace SharpLlmTensors.Runtime
                 {
                     // Fallback für VL-Modelle oder spezielle Architekturen
                     LogVerbose($"[Inference] Warning: Model is not a standard Module<Tensor, Tensor>. Trying dynamic forward.");
-                    logits = (Tensor) this._activeModel.GetType().GetMethod("forward")?.Invoke(this._activeModel, new object[] { inputTensor })!;
+                    using var _ = logits = (Tensor) this._activeModel.GetType().GetMethod("forward")?.Invoke(this._activeModel, new object[] { inputTensor })!;
                 }
 
                 if (logits is null)
