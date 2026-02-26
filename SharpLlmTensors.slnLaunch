@@ -1,0 +1,22 @@
+[
+  {
+    "Name": "API swagger (https)",
+    "Projects": [
+      {
+        "Path": "SharpLlmTensors.Api\\SharpLlmTensors.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "https"
+      }
+    ]
+  },
+  {
+    "Name": "API + WebApp (https)",
+    "Projects": [
+      {
+        "Path": "SharpLlmTensors.Api\\SharpLlmTensors.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "https"
+      }
+    ]
+  }
+]
