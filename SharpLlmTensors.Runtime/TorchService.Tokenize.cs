@@ -3,6 +3,9 @@ using SharpLlmTensors.Shared;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 
 namespace SharpLlmTensors.Runtime
 {
@@ -17,7 +20,7 @@ namespace SharpLlmTensors.Runtime
         /// </summary>
         public async Task InitializeTokenizerAsync(string vocabFilePath, string? mergesFilePath = null)
         {
-            await StaticLogger.LogAsync($"[TorchService] Initializing tokenizer from: {Path.GetFileName(vocabFilePath)}");
+            await StaticLogger.LogAsync($"[TorchService] Initializing tokenizer from: {Path.GetFileName(vocabFilePath)} (full: {vocabFilePath}), merges: {mergesFilePath}");
 
             try
             {
@@ -42,6 +45,104 @@ namespace SharpLlmTensors.Runtime
                 }
                 else
                 {
+                    // Case: tokenizer.json (HuggingFace) may contain a BPE model embedded
+                    if (vocabFilePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && File.Exists(vocabFilePath))
+                    {
+                        try
+                        {
+                            var json = await File.ReadAllTextAsync(vocabFilePath).ConfigureAwait(false);
+                            using var doc = JsonDocument.Parse(json);
+                            if (doc.RootElement.TryGetProperty("model", out var modelEl))
+                            {
+                                var type = modelEl.TryGetProperty("type", out var t) ? t.GetString() : null;
+
+                                // 1) Check for external file references inside tokenizer.json (common case)
+                                if (!string.IsNullOrWhiteSpace(type) && type.Equals("BPE", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string? dir = Path.GetDirectoryName(vocabFilePath);
+                                    string? externalVocabPath = null;
+                                    string? externalMergesPath = null;
+
+                                    if (modelEl.TryGetProperty("vocab", out var vocabRef))
+                                    {
+                                        if (vocabRef.ValueKind == JsonValueKind.String)
+                                        {
+                                            externalVocabPath = Path.IsPathRooted(vocabRef.GetString()) ? vocabRef.GetString() : Path.Combine(dir ?? string.Empty, vocabRef.GetString() ?? string.Empty);
+                                        }
+                                    }
+
+                                    if (modelEl.TryGetProperty("merges", out var mergesRef))
+                                    {
+                                        if (mergesRef.ValueKind == JsonValueKind.String)
+                                        {
+                                            externalMergesPath = Path.IsPathRooted(mergesRef.GetString()) ? mergesRef.GetString() : Path.Combine(dir ?? string.Empty, mergesRef.GetString() ?? string.Empty);
+                                        }
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(externalVocabPath) && !string.IsNullOrWhiteSpace(externalMergesPath)
+                                        && File.Exists(externalVocabPath) && File.Exists(externalMergesPath))
+                                    {
+                                        await StaticLogger.LogAsync($"[TorchService] Found external vocab+merges in tokenizer.json: {externalVocabPath}, {externalMergesPath}");
+                                        using Stream vocabStream = File.OpenRead(externalVocabPath);
+                                        using Stream mergesStream = File.OpenRead(externalMergesPath);
+                                        this._activeTokenizer = await BpeTokenizer.CreateAsync(vocabStream, mergesStream, preTokenizer: null).ConfigureAwait(false);
+                                        await StaticLogger.LogAsync("[TorchService] Tokenizer successfully loaded from tokenizer.json referencing external files (BPE).");
+                                        return;
+                                    }
+
+                                    // 2) Fall back: embedded vocab + merges arrays in tokenizer.json
+                                    if (modelEl.TryGetProperty("vocab", out var vocabEl) && modelEl.TryGetProperty("merges", out var mergesEl))
+                                    {
+                                        // create temp files for vocab and merges
+                                        string tempVocab = Path.Combine(Path.GetTempPath(), $"tokenizer_vocab_{Guid.NewGuid():N}.json");
+                                        string tempMerges = Path.Combine(Path.GetTempPath(), $"tokenizer_merges_{Guid.NewGuid():N}.txt");
+                                        try
+                                        {
+                                            await File.WriteAllTextAsync(tempVocab, vocabEl.GetRawText()).ConfigureAwait(false);
+
+                                            var sb = new StringBuilder();
+                                            foreach (var item in mergesEl.EnumerateArray())
+                                            {
+                                                if (item.ValueKind == JsonValueKind.String)
+                                                {
+                                                    sb.AppendLine(item.GetString());
+                                                }
+                                                else if (item.ValueKind == JsonValueKind.Array)
+                                                {
+                                                    var parts = item.EnumerateArray().Select(x => x.GetString());
+                                                    sb.AppendLine(string.Join(' ', parts));
+                                                }
+                                            }
+
+                                            await File.WriteAllTextAsync(tempMerges, sb.ToString()).ConfigureAwait(false);
+
+                                            using Stream vocabStream = File.OpenRead(tempVocab);
+                                            using Stream mergesStream = File.OpenRead(tempMerges);
+
+                                            this._activeTokenizer = await BpeTokenizer.CreateAsync(
+                                                vocabStream: vocabStream,
+                                                mergesStream: mergesStream,
+                                                preTokenizer: null
+                                            ).ConfigureAwait(false);
+
+                                            await StaticLogger.LogAsync("[TorchService] Tokenizer successfully loaded from tokenizer.json (embedded BPE).");
+                                            return;
+                                        }
+                                        finally
+                                        {
+                                            try { File.Delete(tempVocab); } catch { }
+                                            try { File.Delete(tempMerges); } catch { }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            await StaticLogger.LogAsync($"[TorchService] ERROR parsing tokenizer.json: {ex.Message}");
+                        }
+                    }
+
                     throw new Exception("No compatible tokenizer file format found (.model or vocab/merges pair required).");
                 }
 

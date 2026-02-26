@@ -13,6 +13,8 @@ public sealed class GpuMonitor : IDisposable
 {
     // ------------------------ Public API ------------------------
 
+    public static Dictionary<DateTime, HardwareStatistics> HardwareStatsHistory { get; private set; } = [];
+
     public sealed record Sample(DateTimeOffset Timestamp, double GpuUtil01, double? PowerWatts);
 
     public sealed class ProcessingSession
@@ -381,6 +383,8 @@ public sealed class GpuMonitor : IDisposable
         hwStats.RamStats.Name = "RAM";
         hwStats.GpuStats.Name = this.GetCurrentGpuName();
         hwStats.GpuStats.VramStats.Name = "VRAM";
+
+        HardwareStatsHistory.Add(hwStats.CreatedAt, hwStats);
 
         return hwStats;
     }

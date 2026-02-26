@@ -50,26 +50,28 @@ namespace SharpLlmTensors.Runtime
 
                 var cf = m.ConfigJsonFiles;
 
-                if (!string.IsNullOrEmpty(cf.TokenizerModelFilePath))
+                if (!string.IsNullOrEmpty(cf.TokenizerModelFilePath) && File.Exists(cf.TokenizerModelFilePath))
                 {
                     // Prio 1: .model (Gemma/Llama Standard)
                     finalVocabPath = cf.TokenizerModelFilePath;
                 }
-                else if (!string.IsNullOrEmpty(cf.TokenizerJsonFilePath))
+                else if (!string.IsNullOrEmpty(cf.VocabJsonFilePath) && !string.IsNullOrEmpty(cf.MergesTxtFilePath)
+                         && File.Exists(cf.VocabJsonFilePath) && File.Exists(cf.MergesTxtFilePath))
                 {
-                    // Prio 2: tokenizer.json (HuggingFace)
-                    finalVocabPath = cf.TokenizerJsonFilePath;
-                }
-                else if (!string.IsNullOrEmpty(cf.VocabJsonFilePath))
-                {
-                    // Prio 3: Legacy vocab.json
+                    // Prio 2: Legacy vocab.json + merges.txt (prefer this if present)
                     finalVocabPath = cf.VocabJsonFilePath;
                     finalMergesPath = cf.MergesTxtFilePath;
+                }
+                else if (!string.IsNullOrEmpty(cf.TokenizerJsonFilePath) && File.Exists(cf.TokenizerJsonFilePath))
+                {
+                    // Prio 3: tokenizer.json (HuggingFace)
+                    finalVocabPath = cf.TokenizerJsonFilePath;
                 }
 
                 if (!string.IsNullOrEmpty(finalVocabPath))
                 {
                     // Jetzt rufen wir Initialize mit dem EINDEUTIGEN Pfad auf
+                    await StaticLogger.LogAsync($"[TorchService] Selected tokenizer files -> vocab/tokenizer: {finalVocabPath}, merges: {finalMergesPath}");
                     await this.InitializeTokenizerAsync(finalVocabPath, finalMergesPath);
                 }
                 else

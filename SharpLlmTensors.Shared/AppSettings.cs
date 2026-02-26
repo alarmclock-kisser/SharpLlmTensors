@@ -12,6 +12,7 @@ namespace SharpLlmTensors.Shared
         public bool ShowGenerationStats { get; set; } = false;
 
         public string[] ModelDirectories { get; set; } = [];
+        public string? DefaultModelName { get; set; } = null;
 
         public bool ForceCpu { get; set; } = false;
 

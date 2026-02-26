@@ -9,11 +9,14 @@ namespace SharpLlmTensors.Runtime.Models
 {
     public class GemmaModel : Module<Tensor, Tensor>
     {
-        private readonly Module<Tensor, Tensor> embed_tokens;
+        private readonly TorchSharp.Modules.Embedding embed_tokens;
         private readonly ModuleList<TransformerBlock> layers;
         private readonly RMSNorm norm;
-        private readonly Module<Tensor, Tensor> lm_head;
+        private readonly Module<Tensor, Tensor>? lm_head;
+
         private readonly double _hiddenSize;
+        private readonly bool _tieWordEmbeddings;
+        private readonly double _finalLogitSoftcapping;
 
         public GemmaModel(JsonElement config) : base("GemmaModel")
         {
@@ -23,45 +26,60 @@ namespace SharpLlmTensors.Runtime.Models
             this._hiddenSize = config.GetProperty("hidden_size").GetDouble();
             long numLayers = config.GetProperty("num_hidden_layers").GetInt64();
 
+            // FIX: Prüfen ob das Element existiert UND nicht null ist!
             double eps = 1e-6;
-            if (config.TryGetProperty("rms_norm_eps", out var eProp))
+            if (config.TryGetProperty("rms_norm_eps", out var eProp) && eProp.ValueKind != JsonValueKind.Null)
             {
                 eps = eProp.GetDouble();
             }
 
-            // 1. Embeddings
-            this.embed_tokens = Embedding(vocabSize, (long) this._hiddenSize);
-            this.register_module("embed_tokens", this.embed_tokens);
-            TorchService.LogVerbose($"[GemmaModel] Registered 'embed_tokens' (Vocab: {vocabSize}, Hidden: {this._hiddenSize})");
+            // FIX: Tie Embeddings sicher auslesen
+            this._tieWordEmbeddings = true; // Gemma Standard
+            if (config.TryGetProperty("tie_word_embeddings", out var tieProp) && tieProp.ValueKind != JsonValueKind.Null)
+            {
+                this._tieWordEmbeddings = tieProp.GetBoolean();
+            }
 
-            // 2. Transformer Layers via ModuleList (WICHTIG für Safetensors-Struktur)
+            // FIX: Softcapping sicher auslesen (ist in der JSON oft explizit "null")
+            this._finalLogitSoftcapping = 0.0;
+            if (config.TryGetProperty("final_logit_softcapping", out var capProp) && capProp.ValueKind != JsonValueKind.Null)
+            {
+                this._finalLogitSoftcapping = capProp.GetDouble();
+            }
+
+            TorchService.LogVerbose($"[GemmaModel] Config loaded - Tie Embeddings: {this._tieWordEmbeddings}, Softcap: {this._finalLogitSoftcapping}");
+
+            // 1. Embeddings
+            this.embed_tokens = torch.nn.Embedding(vocabSize, (long) this._hiddenSize);
+            this.register_module("embed_tokens", this.embed_tokens);
+
+            // 2. Layers
             var blocks = new List<TransformerBlock>();
             for (int i = 0; i < numLayers; i++)
             {
-                var block = new TransformerBlock(config, i);
-                blocks.Add(block);
-                TorchService.LogVerbose($"[GemmaModel] Created TransformerBlock for Layer {i}");
+                blocks.Add(new TransformerBlock(config, i));
             }
             this.layers = new ModuleList<TransformerBlock>(blocks.ToArray());
             this.register_module("layers", this.layers);
-            TorchService.LogVerbose("[GemmaModel] Registered 'layers' (ModuleList)");
 
-            // 3. Final Norm
-            this.norm = new RMSNorm(new long[] { (long) this._hiddenSize }, eps);
+            // 3. Final Norm (mit addUnitOffset: true für Gemma!)
+            this.norm = new RMSNorm(new long[] { (long) this._hiddenSize }, eps, addUnitOffset: true);
             this.register_module("norm", this.norm);
-            TorchService.LogVerbose($"[GemmaModel] Registered 'norm' with eps: {eps}");
 
-            // 4. Output Head
-            this.lm_head = Linear((long) this._hiddenSize, vocabSize, hasBias: false);
-            this.register_module("lm_head", this.lm_head);
-            TorchService.LogVerbose("[GemmaModel] Registered 'lm_head'");
+            // 4. Output Head (Nur erstellen, wenn das Modell NICHT tied ist)
+            if (!this._tieWordEmbeddings)
+            {
+                this.lm_head = Linear((long) this._hiddenSize, vocabSize, hasBias: false);
+                this.register_module("lm_head", this.lm_head);
+                TorchService.LogVerbose("[GemmaModel] Registered standalone 'lm_head'");
+            }
         }
 
         public override Tensor forward(Tensor inputIds)
         {
-            TorchService.LogVerbose($"[GemmaModel] Forward started. Input shape: {string.Join(',', inputIds.shape)}");
-
             using var embedded = this.embed_tokens.forward(inputIds);
+
+            // WICHTIG: Gemma skaliert das Input-Embedding mit der Wurzel der Hidden Size
             using var x = embedded * Math.Sqrt(this._hiddenSize);
 
             long seqLen = inputIds.shape[1];
@@ -69,27 +87,40 @@ namespace SharpLlmTensors.Runtime.Models
             using var causalMask = torch.triu(infMask, diagonal: 1).unsqueeze(0).unsqueeze(0);
 
             var current = x;
-            int i = 0;
             foreach (var layer in this.layers)
             {
                 var next = layer.forward(current, causalMask);
-                if (!ReferenceEquals(current, x))
-                {
-                    current.Dispose();
-                }
-
+                if (!ReferenceEquals(current, x)) current.Dispose();
                 current = next;
-                i++;
             }
 
             using var finalNorm = this.norm.forward(current);
-            if (!ReferenceEquals(current, x))
+            if (!ReferenceEquals(current, x)) current.Dispose();
+
+            Tensor logits;
+
+            // Tied Embeddings: Wir recyclen das Gewicht des Eingangs-Layers!
+            if (this._tieWordEmbeddings)
             {
-                current.Dispose();
+                using var embedWeightT = this.embed_tokens.weight?.transpose(0, 1);
+                logits = matmul(finalNorm, embedWeightT ?? throw new InvalidOperationException("Embedding weight is null"));
+            }
+            else
+            {
+                logits = this.lm_head!.forward(finalNorm);
             }
 
-            var logits = this.lm_head.forward(finalNorm);
-            TorchService.LogVerbose($"[GemmaModel] Forward finished. Logits shape: {string.Join(',', logits.shape)}");
+            // Logit Softcapping
+            if (this._finalLogitSoftcapping > 0)
+            {
+                using var softcapped = logits / this._finalLogitSoftcapping;
+                using var tanh = softcapped.tanh();
+                var finalLogits = tanh * this._finalLogitSoftcapping;
+
+                logits.Dispose(); // Alten Tensor wegräumen
+                logits = finalLogits;
+            }
+
             return logits;
         }
     }
