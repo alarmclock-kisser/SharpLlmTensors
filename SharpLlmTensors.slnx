@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="SharpLlmTensors.Api/SharpLlmTensors.Api.csproj" />
   <Project Path="SharpLlmTensors.Client/SharpLlmTensors.Client.csproj" />
+  <Project Path="SharpLlmTensors.Monitoring/SharpLlmTensors.Monitoring.csproj" Id="6e3ce7cc-52d2-4b07-9ca0-642a08995424" />
   <Project Path="SharpLlmTensors.Runtime/SharpLlmTensors.Runtime.csproj" />
   <Project Path="SharpLlmTensors.Shared/SharpLlmTensors.Shared.csproj" />
 </Solution>

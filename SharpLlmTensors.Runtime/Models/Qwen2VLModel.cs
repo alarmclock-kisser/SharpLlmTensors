@@ -64,7 +64,7 @@ namespace SharpLlmTensors.Runtime.Models
                 TorchService.LogVerbose($"    [QwenModelInternal] Transformer block {i} created successfully");
             }
             this.layers = new ModuleList<TransformerBlock>(blocks.ToArray());
-            TorchService.LogVerbose($"[QwenModelInternal] All Transformer blocks created successfully ({layers.Count})");
+            TorchService.LogVerbose($"[QwenModelInternal] All Transformer blocks created successfully ({this.layers.Count})");
             this.register_module("layers", this.layers);
             TorchService.LogVerbose("[QwenModelInternal] <2/3> register_module(layers) SUCCESS");
 

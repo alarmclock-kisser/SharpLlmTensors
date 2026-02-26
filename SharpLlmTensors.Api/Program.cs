@@ -1,4 +1,5 @@
 using SharpLlmTensors.Api.Filters;
+using SharpLlmTensors.Monitoring;
 using SharpLlmTensors.Runtime;
 using SharpLlmTensors.Shared;
 using System.Diagnostics;
@@ -45,6 +46,10 @@ namespace SharpLlmTensors.Api
             // Add services to the container.
             builder.Services.AddSingleton(appSettings);
             builder.Services.AddSingleton<TorchService>();
+            if (appSettings.HardwareMonitoring)
+            {
+                builder.Services.AddSingleton<GpuMonitor>();
+            }
 
             builder.Services.AddControllers();
             // Register Swagger generator (Swashbuckle) so ISwaggerProvider is available

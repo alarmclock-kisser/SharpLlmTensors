@@ -17,7 +17,7 @@ namespace SharpLlmTensors.Runtime
         public async Task<string> GenerateTextAsync(string prompt, int maxNewTokens = 64, CancellationToken ct = default)
         {
             StringBuilder sb = new StringBuilder();
-            await foreach (var token in GenerateTextStreamAsync(prompt, maxNewTokens, false, ct))
+            await foreach (var token in this.GenerateTextStreamAsync(prompt, maxNewTokens, false, ct))
             {
                 sb.Append(token);
             }
@@ -131,7 +131,7 @@ namespace SharpLlmTensors.Runtime
 
             // 9. Statistik-Abschluss
             this.LastGenerationStats.GenerationFinished = DateTime.UtcNow;
-            await LogGenerationSummary();
+            await this.LogGenerationSummary();
         }
 
         private async Task LogGenerationSummary()

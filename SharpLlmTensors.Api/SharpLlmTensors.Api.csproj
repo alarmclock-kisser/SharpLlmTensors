@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\SharpLlmTensors.Monitoring\SharpLlmTensors.Monitoring.csproj" />
     <ProjectReference Include="..\SharpLlmTensors.Runtime\SharpLlmTensors.Runtime.csproj" />
     <ProjectReference Include="..\SharpLlmTensors.Shared\SharpLlmTensors.Shared.csproj" />
   </ItemGroup>

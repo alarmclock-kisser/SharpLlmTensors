@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Text;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.IO;
+using System.Reflection;
 
 namespace SharpLlmTensors.Shared
 {
@@ -36,6 +38,7 @@ namespace SharpLlmTensors.Shared
 
             // 2. FILTERN: Nur die Gewichte kommen in die ModelFilePaths
             this.ModelFilePaths = allFiles.Where(f => f.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase)).ToList();
+            this.ModelSizeInMb = this.ModelFilePaths.Sum(f => new FileInfo(f).Length) / (1024.0 * 1024.0);
 
             if (this.ModelFilePaths.Count == 0)
             {
@@ -43,6 +46,8 @@ namespace SharpLlmTensors.Shared
             }
 
             this.LastModfified = allFiles.Select(File.GetLastWriteTime).Max();
+
+            this.BillionParameters = TryParseBillionParametersCountFromName(this.ModelName);
 
             // 3. ZUWEISEN: Jetzt suchen wir in 'allFiles' nach den Configs
             this.ConfigJsonFiles = new TorchSharpModelJsonFiles(modelRootDirectory);
@@ -74,6 +79,10 @@ namespace SharpLlmTensors.Shared
                 else if (fileName == "tokenizer_config.json")
                 {
                     this.ConfigJsonFiles.TokenizerConfigJsonFilePath = file;
+                }
+                else if (fileName == "chat_template.jinja" || fileName == "chat_template.json")
+                {
+                    this.ConfigJsonFiles.ChatTemplateJsonOrJinjaFilePath = file;
                 }
             }
         }
@@ -125,21 +134,22 @@ namespace SharpLlmTensors.Shared
 
     public class TorchSharpModelJsonFiles
     {
+        public int Count => this.GetValidFilesCount();
+
+        public string? AddedTokensJsonFilePath { get; set; }
+        public string? ChatTemplateJsonOrJinjaFilePath { get; set; }
         public string ConfigJsonFilePath { get; set; }
+        public string? GenerationConfigJsonFilePath { get; set; }
+        public string? MergesTxtFilePath { get; set; }
+        public string? PreprocessorConfigJsonFilePath { get; set; }
+        public string? ProcessorConfigJsonFilePath { get; set; }
+        public string? SpecialTokensMapJsonFilePath { get; set; }
         public string TokenizerJsonFilePath { get; set; }
         public string? TokenizerModelFilePath { get; set; }
         public string TokenizerConfigJsonFilePath { get; set; }
-        public string? GenerationConfigJsonFilePath { get; set; }
-        public string? SpecialTokensMapJsonFilePath { get; set; }
-        public string? AddedTokensJsonFilePath { get; set; }
-        public string? VocabJsonFilePath { get; set; }
-        public string? MergesTxtFilePath { get; set; }
-        public string? ChatTemplateJsonOrJinjaFilePath { get; set; }
-        public string? ProcessorConfigJsonFilePath { get; set; }
-        public string? PreprocessorConfigJsonFilePath { get; set; }
         public string? VideoPreprocessorConfigJsonFilePath { get; set; }
+        public string? VocabJsonFilePath { get; set; }
 
-        public int FilesCount => this.GetFilesCount();
 
 
         public TorchSharpModelJsonFiles(string modelRootDirectory)
@@ -167,75 +177,44 @@ namespace SharpLlmTensors.Shared
         }
 
 
-        public int GetFilesCount()
+        public int GetValidFilesCount()
         {
-            int count = 0;
-            if (File.Exists(this.ConfigJsonFilePath))
+            try
             {
-                count++;
-            }
+                int count = 0;
+                var type = this.GetType();
 
-            if (File.Exists(this.TokenizerJsonFilePath))
+                // Wir prüfen sowohl Properties als auch Fields.
+                // Backing Fields von Auto-Properties sind NonPublic!
+                var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+                // 1. Alle Properties prüfen (die du definiert hast)
+                var properties = type.GetProperties(flags);
+                foreach (var prop in properties)
+                {
+                    if (prop.PropertyType == typeof(string))
+                    {
+                        var val = prop.GetValue(this) as string;
+                        if (!string.IsNullOrWhiteSpace(val) && File.Exists(val))
+                        {
+                            count++;
+                        }
+                    }
+                }
+
+                // Falls du Felder direkt nutzt oder sichergehen willst, 
+                // dass nichts doppelt gezählt wird (Properties vs Backing Fields), 
+                // ist der obige Weg über Properties für dein DTO am sichersten.
+
+                return count;
+            }
+            catch (Exception ex)
             {
-                count++;
+                // Annahme: StaticLogger ist in deinem Projekt verfügbar
+                // StaticLogger.Log(ex); 
+                Console.WriteLine($"Fehler beim Zählen der Dateien: {ex.Message}");
+                return 0;
             }
-
-            if (File.Exists(this.TokenizerModelFilePath))
-            {
-                count++;
-            }
-
-            if (File.Exists(this.TokenizerConfigJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.GenerationConfigJsonFilePath != null && File.Exists(this.GenerationConfigJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.SpecialTokensMapJsonFilePath != null && File.Exists(this.SpecialTokensMapJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.AddedTokensJsonFilePath != null && File.Exists(this.AddedTokensJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.VocabJsonFilePath != null && File.Exists(this.VocabJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.MergesTxtFilePath != null && File.Exists(this.MergesTxtFilePath))
-            {
-                count++;
-            }
-
-            if (this.ChatTemplateJsonOrJinjaFilePath != null && File.Exists(this.ChatTemplateJsonOrJinjaFilePath))
-            {
-                count++;
-            }
-
-            if (this.ProcessorConfigJsonFilePath != null && File.Exists(this.ProcessorConfigJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.PreprocessorConfigJsonFilePath != null && File.Exists(this.PreprocessorConfigJsonFilePath))
-            {
-                count++;
-            }
-
-            if (this.VideoPreprocessorConfigJsonFilePath != null && File.Exists(this.VideoPreprocessorConfigJsonFilePath))
-            {
-                count++;
-            }
-
-            return count;
         }
     }
 }

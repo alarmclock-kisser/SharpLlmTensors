@@ -8,6 +8,7 @@ namespace SharpLlmTensors.Shared
     {
         public bool SilentLog { get; set; } = false;
         public bool VerboseLog { get; set; } = false;
+        public bool HardwareMonitoring { get; set; } = false;
         public bool ShowGenerationStats { get; set; } = false;
 
         public string[] ModelDirectories { get; set; } = [];

@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using SharpLlmTensors.Monitoring;
 using SharpLlmTensors.Runtime;
 using SharpLlmTensors.Shared;
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace SharpLlmTensors.Api.Controllers
@@ -14,10 +16,16 @@ namespace SharpLlmTensors.Api.Controllers
         private readonly AppSettings Settings;
         private readonly TorchService Service;
 
-        public TorchController(AppSettings appSettings, TorchService service)
+        private readonly GpuMonitor? GPUMonitor;
+        public HardwareStatistics? HardwareStatsCache {  get; private set; }
+        public static Dictionary<DateTime, HardwareStatistics> HardwareStatsHistory { get; private set; } = [];
+
+
+        public TorchController(AppSettings appSettings, TorchService service, GpuMonitor? gpuMonitor = null)
         {
             this.Settings = appSettings;
             this.Service = service;
+            this.GPUMonitor = gpuMonitor;
         }
 
 
@@ -50,8 +58,46 @@ namespace SharpLlmTensors.Api.Controllers
             return this.File(fileStream, "text/plain", fileName);
         }
 
+        [SupportedOSPlatform("windows")]
+        [HttpGet("hw-stats")]
+        public async Task<ActionResult<HardwareStatistics>?> GetHardwareStatsAsync()
+        {
+            try
+            {
+                if (this.GPUMonitor != null)
+                {
+                    HardwareStatistics hwStats = await this.GPUMonitor.GetCurrentHardwareStatisticsAsync();
+
+                    this.HardwareStatsCache = hwStats;
+                    HardwareStatsHistory[hwStats.CreatedAt] = hwStats;
+
+                    return this.Ok(hwStats);
+                }
+
+                return this.NotFound();
+            }
+            catch (Exception ex)
+            {
+                return this.StatusCode(500, $"Error retrieving hardware stats: {ex.Message}");
+            }
+        }
+
+        [SupportedOSPlatform("windows")]
+        [HttpGet("hw-stats-history")]
+        public ActionResult<List<HardwareStatistics>> GetHardwareStatsHistory([FromQuery] bool fetchNew = false)
+        {
+            if (fetchNew)
+            {
+                // Trigger a new fetch of hardware stats to get the latest data point
+                _ = this.GetHardwareStatsAsync();
+            }
+
+            return this.Ok(HardwareStatsHistory.Values.OrderByDescending(s => s.CreatedAt).ToList());
+        }
+
+
         [HttpGet("models")]
-        public ActionResult<List<TorchSharpModel>> GetModels([FromQuery] TorchModelsSortingOption sortingOption = TorchModelsSortingOption.Alphabetical)
+        public ActionResult<List<TorchSharpModel>> GetModels([FromQuery] TorchModelsSortingOption sortingOption = TorchModelsSortingOption.ByLatestModified)
         {
             var models = this.Service.GetModels(null, sortingOption);
             return this.Ok(models);
@@ -60,7 +106,7 @@ namespace SharpLlmTensors.Api.Controllers
         [HttpGet("models-simple")]
         public ActionResult<List<string>> GetModelsSimple()
         {
-            var models = this.Service.GetModels().Select(m => $"'{m.ModelName}' [{m.BillionParameters}B] ~{Math.Round(m.ModelSizeInMb)} MB, {m.ConfigJsonFiles.FilesCount} config files").ToList();
+            var models = this.Service.GetModels().Select(m => $"'{m.ModelName}' [{m.BillionParameters}B] ~{Math.Round(m.ModelSizeInMb)} MB, {m.ConfigJsonFiles.Count} config files").ToList();
             return this.Ok(models);
         }
 
